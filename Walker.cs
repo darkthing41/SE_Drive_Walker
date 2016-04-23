@@ -51,7 +51,7 @@ namespace SpaceEngineersScripting
 			namePrefixDrive = "Rotor",      //prefix shared by all drive rotors
 			nameDescriptorDriveBase = "Drive";  //name shared by all drive rotors
 		static readonly string[]
-			nameDesciptorDriveSides = { "L", "R" }, // {left, Right} sides
+			nameDesciptorDriveSides = { "L", "R" }, // {Left, Right} sides
 			nameDesciptorDriveIds = { "F", "B" };   //Ids for each rotor in the column
 			//Expect Drive Descriptor of the form
 			//  <DescriptorDrive> ::= <base>-<side>-<Column>-<id>
@@ -676,12 +676,9 @@ namespace SpaceEngineersScripting
 		{
 			bool valid = true;
 
-			for (uint i=0; i<phaseCount; i++) {
-				for (uint ii=0; ii<driveIdCount; ii++) {
-					valid = valid
-						& ValidateDrive(drives[IndexDrive(driveLeft, i, ii)].drive)
-						& ValidateDrive(drives[IndexDrive(driveRight, i, ii)].drive);
-				}
+			for (uint i=0; i<driveCount; i++) {
+				valid = valid
+					& ValidateDrive(drives[i].drive);
 			}
 
 			if ( !valid ) {
