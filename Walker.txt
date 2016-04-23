@@ -1,0 +1,609 @@
+//Configuration
+//--------------------
+
+static readonly MyBlockOrientation
+    shipOrientation = new MyBlockOrientation
+        (Base6Directions.Direction.Forward, Base6Directions.Direction.Up);
+
+const uint
+    phaseCount = 3;
+
+const float
+    baseRpm = 2.0f,
+    maxRpm = 3.0f;
+
+const float
+    drivekP = (phaseCount / Pi) * baseRpm, //constant for Drive PD controllers
+    drivekD = 0.0f; //constant for Drive PD controllers
+
+//Expected block names are of the form
+//<prefix> <Descriptor>
+
+const string
+    namePrefixDrive = "Rotor",      //prefix shared by all drive rotors
+    nameDescriptorDriveBase = "Drive";  //name shared by all drive rotors
+static readonly string[]
+    nameDesciptorDriveSides = { "L", "R" }, // {left, Right} sides
+    nameDesciptorDriveIds = { "F", "B" };   //Ids for each rotor in the column
+    //Expect Drive Descriptor of the form
+    //  <DescriptorDrive> ::= <base>-<side>-<Column>-<id>
+    //  <Column> ::= <integer range 1..phaseCount>
+    //e.g. Front Right rotor in the innermost column
+    //Rotor Drive-R-1-F
+
+
+//Definitions
+//--------------------
+
+//Opcodes for use as arguments
+//-commands may be issued directly
+const string
+    command_Initialise = "Init";   //args: <none>
+
+
+//Utility definitions
+
+const float
+    Pi = MathHelper.Pi,
+    PiByTwo = Pi * 0.5f,
+    ThreePiByTwo = Pi * 1.5f,
+    TwoPi = Pi * 2.0f;
+
+const float
+    phaseSize = TwoPi / phaseCount;
+
+static float NormaliseRadians_Pi (float angle){
+    if (angle < -Pi)
+        return angle +TwoPi;
+    if (angle >= Pi)
+        return angle -TwoPi;
+    return angle;
+}
+
+static float NormaliseRadians_2Pi (float angle){
+    if (angle < 0.0f)
+        return angle +TwoPi;
+    if (angle >= TwoPi)
+        return angle -TwoPi;
+    return angle;
+}
+
+static float AngleAverage_2Pi(float a, float b){
+    float
+        angleDifference = NormaliseRadians_Pi( b - a );
+    return
+        NormaliseRadians_2Pi( a +(angleDifference/2.0f) );
+}
+
+
+static readonly Base6Directions.Direction //Unit direction vectors for ship
+    shipDown = shipOrientation.TransformDirection(Base6Directions.Direction.Down),
+    shipRight = shipOrientation.TransformDirection(Base6Directions.Direction.Right);
+
+private const uint
+    driveLeft = 0,
+    driveRight = 1;
+
+static readonly uint
+    driveIdCount = (uint)nameDesciptorDriveIds.Length,
+    driveCount = 2 * phaseCount * driveIdCount;  //Left-Right, phase, id
+
+static string NameRotorDrive(uint indexSide, uint indexColumn, uint indexId) {
+    return
+        namePrefixDrive +' ' +nameDescriptorDriveBase +'-'
+        +nameDesciptorDriveSides[indexSide] +'-'
+        +(indexColumn +1).ToString() +'-'
+        +nameDesciptorDriveIds[indexId];
+}
+
+static uint IndexDrive(uint indexSide, uint indexColumn, uint indexId) {
+    return indexId + driveIdCount*( indexColumn + phaseCount*( indexSide ) );
+}
+
+//API definitions
+public struct MotorStator
+{   //IMyMotorStator API wrapper
+    //Velocity is measured internally in RPM
+    //Angle is measured internally in radians. (0-2pi for unlimited rotors)
+    //PROPERTIES:
+    public static void SetVelocity(IMyMotorStator motorStator, float velocity){
+        motorStator.SetValue<float>("Velocity", velocity);
+    }
+    public static void SetLowerLimit(IMyMotorStator motorStator, float lowerLimit){
+        motorStator.SetValue<float>("LowerLimit", lowerLimit);
+    }
+    public static void SetUpperLimit(IMyMotorStator motorStator, float upperLimit){
+        motorStator.SetValue<float>("UpperLimit", upperLimit);
+    }
+}
+
+
+//Internal Types
+//--------------------
+
+public struct PD_Zero
+{
+    private float
+        kP, kD;
+
+    private float
+        errorLast;
+
+    public void Reset()
+    {
+        errorLast = 0;
+    }
+
+    public float Update(float measurement, float elapsedSeconds_reciprocal)
+    {
+        //calculate current error (inverted to provide negative feedback)
+        float error = -measurement;
+
+        float result =
+            (kP * error)
+            +(kD * ( (error -errorLast) * elapsedSeconds_reciprocal ));
+
+        errorLast = error;
+
+        return result;
+    }
+
+    public PD_Zero(float kP, float kD)
+    {
+        this.kP = kP;
+        this.kD = kD;
+
+        this.errorLast = 0;
+    }
+
+    public string Store()
+    {
+        return
+            errorLast.ToString("R");
+    }
+
+    public bool TryRestore(string storage)
+    {
+        return
+            float.TryParse (storage, out errorLast);
+    }
+}
+
+public struct Status
+{
+    //program data not persistent across restarts
+    public bool
+        initialised;
+
+    //status data persistent across restarts
+    public float
+        leftRpm, rightRpm;
+
+    public PD_Zero[]
+        driveControllers;
+
+
+    //configuration constants
+    private const char delimiter = ';';
+
+    //Operations
+
+    public void Initialise()
+    {   //data setup
+        driveControllers = new PD_Zero[driveCount];
+        for (uint i=0; i<phaseCount; i++) {
+            for (uint ii=0; ii<driveIdCount; ii++) {
+                driveControllers[IndexDrive(driveLeft, i, ii)] = new PD_Zero (drivekP, drivekD);
+                driveControllers[IndexDrive(driveRight, i, ii)] = new PD_Zero (drivekP, drivekD);
+            }
+        }
+        leftRpm = baseRpm;
+        rightRpm = baseRpm;
+    }
+
+    public string Store()
+    {
+        StringBuilder s = new StringBuilder();
+        for (uint i=0; i<phaseCount; i++) {
+            for (uint ii=0; ii<nameDesciptorDriveIds.Length; ii++) {
+                s.Append( driveControllers[IndexDrive(driveLeft,i,ii)].Store() );
+                s.Append( delimiter );
+                s.Append( driveControllers[IndexDrive(driveRight,i,ii)].Store() );
+                s.Append( delimiter );
+            }
+        }
+        s.Append( leftRpm.ToString("R") );
+        s.Append( delimiter );
+        s.Append( rightRpm.ToString("R") );
+
+        return s.ToString();
+    }
+
+    public bool TryRestore(string storage)
+    {
+        string[] elements = storage.Split(delimiter);
+        if ( !(elements.Length == driveCount +2) )
+            return false;
+
+        uint pos = 0;    //element to examine
+
+        for (uint i=0; i<phaseCount; i++) {
+            for (uint ii=0; ii<driveIdCount; ii++) {
+                if ( !(
+                    driveControllers[IndexDrive(driveLeft,i,ii)].TryRestore (elements[pos++])
+                    && driveControllers[IndexDrive(driveRight,i,ii)].TryRestore (elements[pos++])
+                ))
+                    return false;
+            }
+        }
+
+        return
+            float.TryParse (elements[pos++], out leftRpm)
+            && float.TryParse (elements[pos++], out rightRpm);
+    }
+}
+
+public struct DriveConfig
+{
+    public IMyMotorStator
+        drive;
+    public bool
+        inverted;
+    public float
+        offset; //observed angle + offset = true angle (from zero; may need inverting)
+
+    public float
+        TrueAngle {
+            get {
+                if (inverted) { return -(drive.Angle +offset); }
+                else          { return   drive.Angle +offset; }
+            }
+        }
+
+    //Operations
+
+    public bool Evaluate()
+    {
+        //check whether the 'Up' side of the rotor is facing shipRight or shipLeft
+        switch (drive.Orientation.TransformDirectionInverse(shipRight)) {
+            case Base6Directions.Direction.Up:
+                inverted = false;
+                break;
+            case Base6Directions.Direction.Down:
+                inverted = true;
+                break;
+            default:
+                inverted = false;
+                offset = float.NaN;
+                return false;
+        }
+        //'0' position is the rotor's 'Right', which should be facing shipDown.
+        switch (drive.Orientation.TransformDirectionInverse(shipDown)) {
+            case Base6Directions.Direction.Right:
+                offset = 0.0f;
+                break;
+            case Base6Directions.Direction.Forward:
+                offset = -ThreePiByTwo;
+                break;
+            case Base6Directions.Direction.Left:
+                offset = -Pi;
+                break;
+            case Base6Directions.Direction.Backward:
+                offset = -PiByTwo;
+                break;
+            default:
+                offset = float.NaN;
+                return false;
+        }
+        return true;
+    }
+}
+
+//Global variables
+//--------------------
+Status
+    status;
+
+DriveConfig []
+    drives = new DriveConfig[driveCount];
+
+float[] //phases, 0..2pi
+    phaseDrives = new float[driveCount],
+    phaseColumns = new float[phaseCount*2], //Left-phases, Right-phases
+    phaseSides = new float[2];
+
+
+//Program
+//--------------------
+
+public Program()
+{
+    Echo ("Restarted.");
+
+    status.Initialise();
+    status.initialised = false; //we are not initialised after restart
+    Storage = null;
+
+//  Echo ("fwd: " +shipForward.ToString());
+//  Echo ("up: " +shipUp.ToString());
+//  Echo ("right: " + shipRight.ToString ());
+}
+
+public void Save ()
+{
+    Storage = status.Store ();
+}
+
+
+public void Main(string argument)
+{
+    //First ensure the system is able to process commands
+    //-if necessary, perform first time setup
+    //-if necessary or requested, initialise the system
+    if ( !status.initialised || argument == command_Initialise) {
+        //if we cannot initialise, end here
+        if ( !Initialise() )
+            return;
+    }
+    if (argument == command_Initialise) {
+        Echo ("resetting.");
+        status.Initialise ();
+    }
+    else if ( !Validate() ) {
+        //if saved state is not valid, try re-initialising
+        //if we cannot initialise, end here
+        if ( !Initialise() )
+            return;
+    }
+
+    //Perform main processing
+    Update ();
+}
+
+
+private void ObservePhases()
+{
+    //The actual phase is defined by the weight-bearing leg
+    //This is whichever drive one has the angle closest to zero
+    //-(potentially untrue if there is roll, pitch, or uneven ground, but good enough)
+
+    for (uint i=0; i<2; i++) {  //Left-Right
+        float
+            phaseOffset = 0.0f;
+        float
+            sidePhase = float.NaN,
+            sideAbsMin = float.PositiveInfinity;
+
+        for (uint ii=0; ii<phaseCount; ii++) {  //Column
+            float
+                columnPhase = float.NaN,
+                columnAbsMin = float.PositiveInfinity;
+
+            for (uint iii=0; iii<driveIdCount; iii++) { //Id
+                uint
+                    indexDrive = IndexDrive(i,ii,iii);
+                float
+                    phase = NormaliseRadians_2Pi(drives[indexDrive].TrueAngle +phaseOffset),
+                    abs = Math.Abs(NormaliseRadians_Pi (drives[indexDrive].TrueAngle ));
+
+                phaseDrives[indexDrive] = phase;
+
+                if (abs < columnAbsMin) {
+                    columnAbsMin = abs;
+                    columnPhase = phase;
+                }
+            }
+
+            phaseColumns[ (i*phaseCount) +ii ] = columnPhase;
+
+            if (columnAbsMin < sideAbsMin) {
+                sideAbsMin = columnAbsMin;
+                sidePhase = columnPhase;
+            }
+
+            phaseOffset += phaseSize;
+        }
+
+        phaseSides[i] = sidePhase;
+    }
+}
+
+private void SetupDrives(uint side, float phaseTarget, float elapsedSeconds_reciprocal, float rpmSide){
+    for (uint ii=0; ii<phaseCount; ii++) {  //column
+        for (uint iii=0; iii<driveIdCount; iii++) { //id
+            uint indexDrive = IndexDrive(side, ii, iii);
+            DriveConfig drive = drives[indexDrive];
+
+            //calculate target angle based on phase
+            float target = //0..2pi
+                NormaliseRadians_2Pi (phaseTarget -(ii * phaseSize));
+            float error =   //-pi..pi
+                NormaliseRadians_Pi (NormaliseRadians_Pi(drives[indexDrive].TrueAngle) -target);
+
+            float correction =
+                status.driveControllers[indexDrive].Update(error, elapsedSeconds_reciprocal);
+
+            float velocity =
+                MyMath.Clamp (rpmSide + correction, 0.0f, maxRpm);
+
+            MotorStator.SetVelocity (drive.drive,
+                drive.inverted ? -velocity : velocity);
+        }
+    }
+}
+
+private void Update()
+{
+    double elapsedSeconds = Runtime.TimeSinceLastRun.TotalSeconds;
+    //precalculate reciprocal for optimisation
+    //-handle special case of time=0
+    float elapsedSeconds_reciprocal = (elapsedSeconds == 0.0) ? 0.0f : 1.0f / (float)elapsedSeconds;
+
+    Echo ("dt = " +elapsedSeconds.ToString() );
+
+//  for (uint i=0; i<2; i++) {
+//      for (uint ii=0; ii<phaseCount; ii++) {
+//          for (uint iii=0; iii<driveIdCount; iii++) {
+//              DriveConfig config = drives[IndexDrive(i, ii, iii)];
+//
+//              Echo (config.drive.CustomName +" :");
+//              Echo (" inverted = " +config.inverted.ToString() );
+//              Echo (" offset = " +MathHelper.ToDegrees(config.offset).ToString("F1") +'\u00B0');
+//              //Echo (" angle = " + MathHelper.ToDegrees(config.drive.TrueAngle).ToString("F1") +'\u00B0');
+//          }
+//      }
+//  }
+    ObservePhases();
+
+    //Update PDs and adjust Drives
+    float   //phases, 0..2pi
+        phaseTargetLeft,
+        phaseTargetRight;
+
+    //if possible, adjust targets to synchronise left and right sides
+    if (status.leftRpm == status.rightRpm) {
+        Echo ("synchronising sides...");
+        float phaseTargetShared =
+                //AngleAverage_2Pi(phaseSides[driveLeft], phaseSides[driveRight]);
+                AngleAverage_2Pi(phaseColumns[0], phaseColumns[phaseCount]);
+//      Echo ("TARGET: " +MathHelper.ToDegrees(phaseTargetShared).ToString("F1") +'\u00B0');
+        phaseTargetLeft = phaseTargetShared;
+        phaseTargetRight = phaseTargetShared;
+    } else {
+        phaseTargetLeft = phaseSides[driveLeft];
+        phaseTargetRight = phaseSides[driveRight];
+    }
+
+    //{!}TODO adjust to synchronise within sides, within columns
+
+    //set up Drives
+    SetupDrives(driveLeft, phaseTargetLeft, elapsedSeconds_reciprocal, status.leftRpm);
+    SetupDrives(driveRight, phaseTargetRight, elapsedSeconds_reciprocal, status.rightRpm);
+
+    //Echo status
+//  Echo ("phaseLeft: " +MathHelper.ToDegrees(phaseSides[0]).ToString("F1") +'\u00B0');
+//  for (uint i=0; i<phaseCount; i++) {
+//      Echo ("  column" +(i+1).ToString() +": " +MathHelper.ToDegrees(phaseColumns[i]).ToString("F1") +'\u00B0');
+//      for (uint ii=0; ii<driveIdCount; ii++){
+//          Echo ("    id" +(nameDesciptorDriveIds[ii]) +": " +MathHelper.ToDegrees(phaseDrives[IndexDrive(driveLeft,i,ii)]).ToString("F1") +'\u00B0');
+//          Echo ("     rpm: " +drives[IndexDrive(driveLeft,i,ii)].drive.Velocity.ToString("F1") +"rpm");
+//      }
+//  }
+//  Echo ("phaseRight: " +MathHelper.ToDegrees(phaseSides[1]).ToString("F1") +'\u00B0');
+//  for (uint i=0; i<phaseCount; i++) {
+//      Echo ("  column" +(i+1).ToString() +": " +MathHelper.ToDegrees(phaseColumns[phaseCount +i]).ToString("F1") +'\u00B0');
+//      for (uint ii=0; ii<driveIdCount; ii++){
+//          Echo ("    id" +(nameDesciptorDriveIds[ii]) +": " +MathHelper.ToDegrees(phaseDrives[IndexDrive(driveRight,i,ii)]).ToString("F1") +'\u00B0');
+//          Echo ("     rpm: " +drives[IndexDrive(driveRight,i,ii)].drive.Velocity.ToString("F1") +"rpm");
+//      }
+//  }
+//
+}
+
+
+private bool ValidateBlock(IMyTerminalBlock block, bool callbackRequired=false)
+{
+    //check for block deletion?
+
+    //check that we have required permissions to control the block
+    if ( ! Me.HasPlayerAccess(block.OwnerId) ) {
+        Echo ("ERROR: no permissions for \"" +block.CustomName +"\"");
+        return false;
+    }
+
+    //check that the block has required permissions to make callbacks
+    if ( callbackRequired && !block.HasPlayerAccess(Me.OwnerId) ) {
+        Echo ("ERROR: no permissions on \"" +block.CustomName +"\"");
+        return false;
+    }
+
+    //check that block is functional
+    if (!block.IsFunctional) {
+        Echo ("ERROR: non-functional block \"" +block.CustomName +"\"");
+        return false;
+    }
+
+    return true;
+}
+
+private bool ValidateDrive(IMyMotorStator drive)
+{
+    if ( ! ValidateBlock(drive) )
+        return false;
+
+    if ( ! drive.IsAttached ){
+        Echo ("ERROR: Drive not attached \"" +drive.CustomName +"\"");
+        return false;
+    }
+
+    return true;
+}
+
+private bool Initialise()
+{
+    status.initialised = false;
+    Echo ("initialising...");
+
+    var temp = new List<IMyTerminalBlock>();
+
+    //Discover drive rotors
+    GridTerminalSystem.GetBlocksOfType<IMyMotorStator>(temp);
+    for (uint i=0; i<2; i++) {  //Left-Right
+        for (uint ii=0; ii<phaseCount; ii++) {  //Column
+            for (uint iii=0; iii<driveIdCount; iii++) { //Id
+                //Clear any existing reference
+                uint indexDrive = IndexDrive(i, ii, iii);
+                drives[indexDrive].drive = null;
+
+                //Find the required Drive
+                string nameBlock = NameRotorDrive(i,ii,iii);
+                for (int t=0; t<temp.Count; t++) {
+                    if (temp[t].CustomName == nameBlock) {
+                        if (drives[indexDrive].drive == null) {
+                            drives[indexDrive].drive = (IMyMotorStator)temp[t];
+                        } else {
+                            Echo ("ERROR: duplicate name \"" + nameBlock + "\"");
+                            return false;
+                        }
+                    }
+                }
+                //Check that the Drive was found
+                if (drives[indexDrive].drive == null) {
+                    Echo ("ERROR: block not found \"" +nameBlock +"\"");
+                    return false;
+                }
+                //Check that the found Drive is operable
+                if ( !ValidateDrive(drives[indexDrive].drive) )
+                    return false;
+                if ( !drives[indexDrive].Evaluate() ) {
+                    Echo ("ERROR: drive has invalid orientation \"" + nameBlock + "\"");
+                    return false;
+                }
+
+            }
+        }
+    }
+
+    status.initialised = true;
+    Echo ("Initialisation completed with no errors.");
+    return true;
+}
+
+
+private bool Validate()
+{
+    bool valid = true;
+
+    for (uint i=0; i<phaseCount; i++) {
+        for (uint ii=0; ii<driveIdCount; ii++) {
+            valid = valid
+                & ValidateDrive(drives[IndexDrive(driveLeft, i, ii)].drive)
+                & ValidateDrive(drives[IndexDrive(driveRight, i, ii)].drive);
+        }
+    }
+
+    if ( !valid ) {
+        Echo ("Validation of saved blocks failed.");
+    }
+    return valid;
+}
