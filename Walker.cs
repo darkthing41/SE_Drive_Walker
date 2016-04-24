@@ -330,7 +330,7 @@ namespace SpaceEngineersScripting
 			/// 0 => shipDown
 			/// Positive direction is clockwise when looking shipLeft (moves vehicle forward)
 			/// </summary>
-			/// <value>The true angle in radians, range -3pi/2..3pi/2 (not normalised)</value>
+			/// <value>The true angle in radians, range -2pi..2pi (not normalised)</value>
 			public float
 				TrueAngle {
 					get {
@@ -462,8 +462,9 @@ namespace SpaceEngineersScripting
 						uint
 							indexDrive = IndexDrive(i,ii,iii);
 						float
-							phase = NormaliseRadians_2Pi(drives[indexDrive].TrueAngle +phaseOffset),
-							abs = Math.Abs(NormaliseRadians_Pi (drives[indexDrive].TrueAngle ));
+							angle = drives[indexDrive].TrueAngle,
+							phase = NormaliseRadians_2Pi(angle +phaseOffset),
+							abs = Math.Abs( NormaliseRadians_Pi(angle) );
 
 						phaseDrives[indexDrive] = phase;
 
@@ -494,16 +495,15 @@ namespace SpaceEngineersScripting
 					DriveConfig drive = drives[indexDrive];
 
 					//calculate target angle based on phase
-					float target = //0..2pi
-						NormaliseRadians_2Pi (phaseTarget -(ii * phaseSize));
-					float error =   //-pi..pi
-						NormaliseRadians_Pi (NormaliseRadians_Pi(drives[indexDrive].TrueAngle) -target);
+					float //0..2pi
+						target = NormaliseRadians_2Pi (phaseTarget -(ii * phaseSize));
+					float //-pi..pi
+						error = NormaliseRadians_Pi (NormaliseRadians_Pi(drives[indexDrive].TrueAngle) -target);
 
-					float correction = 
-						status.driveControllers[indexDrive].Update(error, elapsedSeconds_reciprocal);
-
-					float velocity =
-						MyMath.Clamp (rpmSide + correction, 0.0f, maxRpm);
+					float 
+						correction = status.driveControllers[indexDrive].Update(error, elapsedSeconds_reciprocal);
+					float
+						velocity = MyMath.Clamp (rpmSide + correction, 0.0f, maxRpm);
 
 					MotorStator.SetVelocity (drive.drive, 
 						drive.inverted ? -velocity : velocity);
