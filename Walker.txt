@@ -191,11 +191,8 @@ public struct Status
     public void Initialise()
     {   //data setup
         driveControllers = new PD_Zero[driveCount];
-        for (uint i=0; i<phaseCount; i++) {
-            for (uint ii=0; ii<driveIdCount; ii++) {
-                driveControllers[IndexDrive(driveLeft, i, ii)] = new PD_Zero (drivekP, drivekD);
-                driveControllers[IndexDrive(driveRight, i, ii)] = new PD_Zero (drivekP, drivekD);
-            }
+        for (uint i=0; i<driveCount; i++) {
+            driveControllers[i] = new PD_Zero (drivekP, drivekD);
         }
         leftRpm = baseRpm;
         rightRpm = baseRpm;
