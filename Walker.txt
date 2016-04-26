@@ -440,7 +440,7 @@ CommandBus
 Status
     status;
 
-DriveConfig []
+DriveConfig[]
     drives = new DriveConfig[driveCount];
 
 float[] //phases, 0..2pi

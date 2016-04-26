@@ -110,7 +110,7 @@ namespace SpaceEngineersScripting
 		}
 
 		static float AngleAverage_2Pi(float a, float b){
-			float 
+			float
 				angleDifference = NormaliseRadians_Pi( b - a );
 			return
 				NormaliseRadians_2Pi( a +(angleDifference/2.0f) );
@@ -545,7 +545,7 @@ namespace SpaceEngineersScripting
 		Status
 			status;
 
-		DriveConfig []
+		DriveConfig[]
 			drives = new DriveConfig[driveCount];
 
 		float[] //phases, 0..2pi
@@ -684,12 +684,12 @@ namespace SpaceEngineersScripting
 					float //-pi..pi
 						error = NormaliseRadians_Pi (NormaliseRadians_Pi(drives[indexDrive].TrueAngle) -target);
 
-					float 
+					float
 						correction = status.driveControllers[indexDrive].Update(error, elapsedSeconds_reciprocal);
 					float
 						velocity = MyMath.Clamp (rpmSide + correction, 0.0f, maxRpm);
 
-					MotorStator.SetVelocity (drive.drive, 
+					MotorStator.SetVelocity (drive.drive,
 						drive.inverted ? -velocity : velocity);
 				}
 			}
@@ -726,7 +726,7 @@ namespace SpaceEngineersScripting
 			//if possible, adjust targets to synchronise left and right sides
 			if (status.leftRpm == status.rightRpm) {
 				Echo ("synchronising sides...");
-				float phaseTargetShared = 
+				float phaseTargetShared =
 						//AngleAverage_2Pi(phaseSides[driveLeft], phaseSides[driveRight]);
 						AngleAverage_2Pi(phaseColumns[0], phaseColumns[phaseCount]);
 //				Echo ("TARGET: " +MathHelper.ToDegrees(phaseTargetShared).ToString("F1") +'\u00B0');
