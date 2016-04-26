@@ -31,6 +31,9 @@ static readonly string[]
     //e.g. Front Right rotor in the innermost column
     //Rotor Drive-R-1-F
 
+const string
+    nameBusCommand = "Bus Drive.Command";
+
 
 //Definitions
 //--------------------
@@ -120,6 +123,138 @@ public struct MotorStator
 
 //Internal Types
 //--------------------
+
+public struct CommandBus
+{
+    //The bus stores a series of records as a string, each ended by the terminator
+    //  *It is not checked that records do not contain the terminator
+    //   so make sure that you do not corrupt it by using this character
+
+    //The Command Bus stores only one Record Type:
+    //-Temporary: appended on write (duplicates allowed), destructive read (FIFO)
+    //e.g. use temporary records to issue commands / directional data transfer
+
+    //Records have an Id allowing basic discrimination
+    //(e.g. source and/or destination and/or data as needed)
+
+    //Additionally, records all have a Data Type to allow for basic type checking.
+    //(new types may be easily added, so long as they can be encoded/decoded
+    // from a string, and ensured not to contain the record terminator)
+
+    //Temporary records are appended to the end of the store.
+    //Interpreting the read records is down to the application.
+
+    //FORMAT
+    //<Record> ::= <RecordBody><recordTerminator>
+    //<RecordBody> ::= <RecordTemporary>
+    //<RecordTemporary> ::= <id><Data>
+    //<id> ::= <string-lengthId>
+    //<Data> ::= <DataInt> | <DataFloat> | <DataString>
+    //<DataInt> ::= <dataTypeInt><int>
+    //<DataFloat> ::= <dataTypeFloat><float>
+    //<DataString> ::= <dataTypeFloat><string>
+
+    //e.g. Temporary string record 'Speed' = "reset"
+    //Speed__Sreset\n
+
+
+    //Configuration
+    public const char
+        recordTerminator = '\n';//'\x1E'; //Record separator
+
+    public const char
+        dataTypeInt = 'I',
+        dataTypeFloat = 'F',
+        dataTypeString = 'S';
+
+    public const int
+        lengthId = 8;
+
+    //The source of the storage
+    public IMyTextPanel
+        bus;
+
+    //Internal storage interface
+    private string Store{
+        get { return bus.GetPrivateText(); }
+        set { bus.WritePrivateText(value, false); }
+    }
+    private void Append(string value){
+        bus.WritePrivateText(value, true);
+    }
+
+
+    //Internal Implementation
+    private string
+        store;
+    private int
+        readPos;
+
+    private void AppendTemporaryData(ref string id, char dataType, ref string data){
+        Append(id +dataType +data +recordTerminator);
+    }
+
+
+    //PUBLIC INTERFACE
+
+    public CommandBus(IMyTextPanel bus){
+        this.bus = bus;
+
+        store = null;
+        readPos = 0;
+    }
+
+    public static string ExtendId(string id){
+        return id.PadRight(lengthId, ' ');
+    }
+
+    public void AppendTemporaryInt(string id, int value){
+        string data = value.ToString ();
+        AppendTemporaryData(ref id, dataTypeInt, ref data);
+    }
+
+    public void AppendTemporaryFloat(string id, float value){
+        string data = value.ToString ("R");
+        AppendTemporaryData(ref id, dataTypeFloat, ref data);
+    }
+
+    public void AppendTemporaryString(string id, string value){
+        AppendTemporaryData(ref id, dataTypeString, ref value);
+    }
+
+    public void BeginRead(){
+        store = Store;
+        readPos = 0;
+    }
+
+    public bool ReadNext(out string id, out char dataType, out string data){
+        if (readPos < store.Length)
+        {
+            id = store.Substring (readPos, lengthId);
+            readPos += lengthId;
+
+            dataType = store[readPos++];
+
+            int dataPos = readPos;
+            while (store[readPos++] != recordTerminator) {};
+            data = store.Substring (dataPos, readPos -dataPos -1);
+
+            return true;
+        } else {
+            //end of storage; no record to return
+            id = null;
+            dataType = '\0';
+            data = null;
+            return false;
+        }
+    }
+
+    public void EndRead(){
+        Store = store.Remove(0, readPos);
+        readPos = 0;
+    }
+
+}
 
 public struct PD_Zero
 {
@@ -298,6 +433,9 @@ public struct DriveConfig
 
 //Global variables
 //--------------------
+CommandBus
+    busCmd;
+
 Status
     status;
 
@@ -498,6 +636,29 @@ private void Update()
 }
 
 
+private bool FindBlock<BlockType>(out BlockType block, string nameBlock, ref List<IMyTerminalBlock> temp)
+    where BlockType : class, IMyTerminalBlock
+{
+    block = null;
+    GridTerminalSystem.GetBlocksOfType<BlockType> (temp);
+    for (int i=0; i<temp.Count; i++){
+        if (temp[i].CustomName == nameBlock) {
+            if (block == null) {
+                block = (BlockType)temp[i];
+            } else {
+                Echo ("ERROR: duplicate name \"" +nameBlock +"\"");
+                return false;
+            }
+        }
+    }
+    //verify that the block was found
+    if (block == null) {
+        Echo ("ERROR: block not found \"" +nameBlock +"\"");
+        return false;
+    }
+    return true;
+}
+
 private bool ValidateBlock(IMyTerminalBlock block, bool callbackRequired=false)
 {
     //check for block deletion?
@@ -581,6 +742,16 @@ private bool Initialise()
         }
     }
 
+    //Discover command bus
+    {
+        IMyTextPanel textPanel;
+        if ( !( FindBlock<IMyTextPanel>(out textPanel, nameBusCommand, ref temp)
+                && ValidateBlock(textPanel, callbackRequired:false) ))
+            return false;
+        else
+            busCmd = new CommandBus(textPanel);
+    }
+
     status.initialised = true;
     Echo ("Initialisation completed with no errors.");
     return true;
@@ -589,7 +760,8 @@ private bool Initialise()
 
 private bool Validate()
 {
-    bool valid = true;
+    bool valid =
+        ValidateBlock(busCmd.bus);
 
     for (uint i=0; i<driveCount; i++) {
         valid = valid

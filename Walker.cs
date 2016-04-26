@@ -59,6 +59,9 @@ namespace SpaceEngineersScripting
 			//e.g. Front Right rotor in the innermost column
 			//Rotor Drive-R-1-F
 
+		const string
+			nameBusCommand = "Bus Drive.Command";
+
 
 		//Definitions
 		//--------------------
@@ -188,6 +191,161 @@ namespace SpaceEngineersScripting
 
 		//Internal Types
 		//--------------------
+
+		/// <summary>
+		/// A bus specialising in transfer of temporary records to a single reader.
+		/// </summary>
+		public struct CommandBus
+		{
+			//The bus stores a series of records as a string, each ended by the terminator
+			//	*It is not checked that records do not contain the terminator
+			//	 so make sure that you do not corrupt it by using this character
+
+			//The Command Bus stores only one Record Type:
+			//-Temporary: appended on write (duplicates allowed), destructive read (FIFO)
+			//e.g. use temporary records to issue commands / directional data transfer
+
+			//Records have an Id allowing basic discrimination
+			//(e.g. source and/or destination and/or data as needed)
+
+			//Additionally, records all have a Data Type to allow for basic type checking.
+			//(new types may be easily added, so long as they can be encoded/decoded
+			// from a string, and ensured not to contain the record terminator)
+
+			//Temporary records are appended to the end of the store.
+			//Interpreting the read records is down to the application.
+
+			//FORMAT
+			//<Record> ::= <RecordBody><recordTerminator>
+			//<RecordBody> ::= <RecordTemporary>
+			//<RecordTemporary> ::= <id><Data>
+			//<id> ::= <string-lengthId>
+			//<Data> ::= <DataInt> | <DataFloat> | <DataString>
+			//<DataInt> ::= <dataTypeInt><int>
+			//<DataFloat> ::= <dataTypeFloat><float>
+			//<DataString> ::= <dataTypeFloat><string>
+
+			//e.g. Temporary string record 'Speed' = "reset"
+			//Speed__Sreset\n
+
+
+			//Configuration
+			public const char
+				recordTerminator = '\n';//'\x1E'; //Record separator
+
+			public const char
+				dataTypeInt = 'I',
+				dataTypeFloat = 'F',
+				dataTypeString = 'S';
+
+			public const int
+				lengthId = 8;
+
+			//The source of the storage
+			public IMyTextPanel
+				bus;
+
+			//Internal storage interface
+			private string Store{
+				get { return bus.GetPrivateText(); }
+				set { bus.WritePrivateText(value, false); }
+			}
+			private void Append(string value){
+				bus.WritePrivateText(value, true);
+			}
+
+
+			//Internal Implementation
+			private string
+				store;
+			private int
+				readPos;
+
+			/// <summary>
+			/// AppendTemporary archetype; append raw string as a temporary record.
+			/// </summary>
+			private void AppendTemporaryData(ref string id, char dataType, ref string data){
+				Append(id +dataType +data +recordTerminator);
+			}
+
+
+			//PUBLIC INTERFACE
+
+			public CommandBus(IMyTextPanel bus){
+				this.bus = bus;
+
+				store = null;
+				readPos = 0;
+			}
+
+			/// <summary>
+			/// Utility function to pad a string into an identifier of the required length.
+			/// It is NOT checked that the given id not already too long, and hence invalid.
+			/// </summary>
+			/// <returns>The valid identifier based on <paramref name="id"/>.</returns>
+			public static string ExtendId(string id){
+				return id.PadRight(lengthId, ' ');
+			}
+
+			public void AppendTemporaryInt(string id, int value){
+				string data = value.ToString ();
+				AppendTemporaryData(ref id, dataTypeInt, ref data);
+			}
+
+			public void AppendTemporaryFloat(string id, float value){
+				string data = value.ToString ("R");
+				AppendTemporaryData(ref id, dataTypeFloat, ref data);
+			}
+
+			public void AppendTemporaryString(string id, string value){
+				AppendTemporaryData(ref id, dataTypeString, ref value);
+			}
+
+			/// <summary>
+			/// Begin the read process.
+			/// Caches the store and prepares for optimised reads.
+			/// </summary>
+			public void BeginRead(){
+				store = Store;
+				readPos = 0;
+			}
+
+			/// <summary>
+			/// Reads the next record in the cached store.
+			/// </summary>
+			/// <returns><c>true</c>, if a record was found; <c>false</c> if were no records to read.</returns>
+			public bool ReadNext(out string id, out char dataType, out string data){
+				if (readPos < store.Length)
+				{
+					id = store.Substring (readPos, lengthId);
+					readPos += lengthId;
+
+					dataType = store[readPos++];
+
+					int dataPos = readPos;
+					while (store[readPos++] != recordTerminator) {};
+					data = store.Substring (dataPos, readPos -dataPos -1);
+
+					return true;
+				} else {
+					//end of storage; no record to return
+					id = null;
+					dataType = '\0';
+					data = null;
+					return false;
+				}
+			}
+
+			/// <summary>
+			/// End the read process.
+			/// Saves the cached store.
+			/// </summary>
+			public void EndRead(){
+				Store = store.Remove(0, readPos);
+				readPos = 0;
+			}
+
+		}
 
 		/// <summary>
 		/// A cut-down PID controller.
@@ -380,6 +538,9 @@ namespace SpaceEngineersScripting
 
 		//Global variables
 		//--------------------
+		CommandBus
+			busCmd;
+
 		Status
 			status;
 
@@ -580,6 +741,29 @@ namespace SpaceEngineersScripting
 		}
 
 
+		private bool FindBlock<BlockType>(out BlockType block, string nameBlock, ref List<IMyTerminalBlock> temp)
+			where BlockType : class, IMyTerminalBlock
+		{
+			block = null;
+			GridTerminalSystem.GetBlocksOfType<BlockType> (temp);
+			for (int i=0; i<temp.Count; i++){
+				if (temp[i].CustomName == nameBlock) {
+					if (block == null) {
+						block = (BlockType)temp[i];
+					} else {
+						Echo ("ERROR: duplicate name \"" +nameBlock +"\"");
+						return false;
+					}
+				}
+			}
+			//verify that the block was found
+			if (block == null) {
+				Echo ("ERROR: block not found \"" +nameBlock +"\"");
+				return false;
+			}
+			return true;
+		}
+
 		private bool ValidateBlock(IMyTerminalBlock block, bool callbackRequired=false)
 		{
 			//check for block deletion?
@@ -663,6 +847,16 @@ namespace SpaceEngineersScripting
 				}
 			}
 
+			//Discover command bus
+			{
+				IMyTextPanel textPanel;
+				if ( !( FindBlock<IMyTextPanel>(out textPanel, nameBusCommand, ref temp)
+				        && ValidateBlock(textPanel, callbackRequired:false) ))
+					return false;
+				else
+					busCmd = new CommandBus(textPanel);
+			}
+
 			status.initialised = true;
 			Echo ("Initialisation completed with no errors.");
 			return true;
@@ -671,7 +865,8 @@ namespace SpaceEngineersScripting
 
 		private bool Validate()
 		{
-			bool valid = true;
+			bool valid =
+				ValidateBlock(busCmd.bus);
 
 			for (uint i=0; i<driveCount; i++) {
 				valid = valid
