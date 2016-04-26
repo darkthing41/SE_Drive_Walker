@@ -455,6 +455,7 @@ namespace SpaceEngineersScripting
 
 				uint pos = 0;    //element to examine
 
+				driveControllers = new PD_Zero[driveCount];
 				for (uint i=0; i<phaseCount; i++) {
 					for (uint ii=0; ii<driveIdCount; ii++) {
 						if ( !(
@@ -560,18 +561,37 @@ namespace SpaceEngineersScripting
 		{
 			Echo ("Restarted.");
 
-			status.Initialise();
-			status.initialised = false; //we are not initialised after restart
-			Storage = null;
+			//script has been reloaded
+			//-may be first time running
+			//-world may have been reloaded (or script recompiled)
+			if (Storage == null) {
+				//use default values
+				status.Initialise();
+			} else {
+				//attempt to restore saved values
+				//  -otherwise use defaults
+				Echo ("restoring saved state...");
+				if ( !status.TryRestore(Storage) ){
+					Echo ("restoration failed.");
+					status.Initialise();
+				}
+			}
+			//We are not initialised after restart
+			//-attempt to initialise now to reduce load at run-time
+			status.initialised = false;
+			Initialise();
 
 //			Echo ("fwd: " +shipForward.ToString());
 //			Echo ("up: " +shipUp.ToString());
 //			Echo ("right: " + shipRight.ToString ());
 		}
 
-		public void Save ()
+
+		public void Save()
 		{
-			Storage = status.Store ();
+			//Command data should be persistent across recompilation
+			//-must save after each execution, so no need to save here
+			//Storage = status.Store();
 		}
 
 
@@ -598,6 +618,9 @@ namespace SpaceEngineersScripting
 
 			//Perform main processing
 			Update ();
+
+			//Save status back
+			Storage = status.Store();
 		}
 
 
