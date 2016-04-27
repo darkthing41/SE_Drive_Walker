@@ -62,6 +62,9 @@ namespace SpaceEngineersScripting
 		const string
 			nameBusCommand = "Bus Drive.Command";
 
+		const uint
+			commandsMax = 10;    //maximum number of commands to read each run
+
 
 		//Definitions
 		//--------------------
@@ -70,6 +73,11 @@ namespace SpaceEngineersScripting
 		//-commands may be issued directly
 		const string
 			command_Initialise = "Init";   //args: <none>
+
+		//Bus ids
+		static readonly string
+			busIdLeftRpm = CommandBus.ExtendId("LeftRpm"),  // Left RPM := float
+			busIdRightRpm = CommandBus.ExtendId("RightRpm");// Right RPM := float
 
 
 		//Utility definitions
@@ -405,8 +413,8 @@ namespace SpaceEngineersScripting
 				for (uint i=0; i<driveCount; i++) {
 					driveControllers[i] = new PD_Zero (drivekP, drivekD);
 				}
-				leftRpm = baseRpm;
-				rightRpm = baseRpm;
+				leftRpm = 0.0f;
+				rightRpm = 0.0f;
 			}
 
 			public string Store()
@@ -596,11 +604,80 @@ namespace SpaceEngineersScripting
 					return;
 			}
 
+			//Read any control commands
+			busCmd.BeginRead();
+			ReadCommands();
+			busCmd.EndRead();
+
 			//Perform main processing
 			Update ();
 
 			//Save status back
 			Storage = status.Store();
+		}
+
+
+		/// <summary>
+		/// Parses an RPM value, and sets the target if it is valid.
+		/// </summary>
+		/// <returns><c>true</c> if rpm was set, <c>false</c> otherwise.</returns>
+		private bool ParseRpm(string s, ref float target ){
+			float rpm;
+			if (float.TryParse (s, out rpm)) {
+				if ( (rpm >= -baseRpm) && (rpm <= baseRpm) ) {
+					target = rpm;
+					return true;
+				} else {
+					Echo ("WARNING: RPM value out of bounds \"" +s +"\"");
+					return false;
+				}
+			} else {
+				Echo ("WARNING: Invalid RPM value \"" +s +"\"");
+				return false;
+			}
+		}
+
+		private void ReadCommands()
+		{
+			string
+				id,	data;
+			char
+				dataType;
+
+			//Read commands until there are none left, or hit max
+			for (int i=0; i<commandsMax; i++) {
+				if (busCmd.ReadNext (out id, out dataType, out data)) {
+					switch (dataType) {
+						case CommandBus.dataTypeString:
+
+							break;
+
+						case CommandBus.dataTypeFloat:
+							if (id == busIdLeftRpm) {
+								if (ParseRpm (data, ref status.leftRpm)) {
+									Echo ("Left RPM set.");
+								}
+							} else if (id == busIdRightRpm) {
+								if (ParseRpm (data, ref status.rightRpm)) {
+									Echo ("Right RPM set.");
+								}
+							} else {
+								break;
+							}
+							continue;
+
+						default:
+							break;
+					}
+					//If we exited without 'continue', the command was unrecognised.
+					Echo ("WARNING: Unrecognised command \"" +id +"\" type '" +dataType +"'");
+				} else {
+					Echo ("All commands read.");
+					return;
+				}
+			}
+
+			Echo ("Not reading further commands.");
 		}
 
 
