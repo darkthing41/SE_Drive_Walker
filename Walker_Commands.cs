@@ -42,8 +42,8 @@ namespace SpaceEngineersScripting_Support
 
 		//Bus ids
 		static readonly string
-			busIdLeftRpm = CommandBus.ExtendId("LeftRpm"),  // Left RPM := float
-			busIdRightRpm = CommandBus.ExtendId("RightRpm");// Right RPM := float
+			busIdRpmLeft = CommandBus.ExtendId("RpmLeft"),  // Left RPM := float
+			busIdRpmRight = CommandBus.ExtendId("RpmRight");// Right RPM := float
 
 
 		//Internal Types
@@ -223,8 +223,8 @@ namespace SpaceEngineersScripting_Support
 		}
 
 		private void SetSpeed(float coefficient){
-			busCmd.AppendTemporaryFloat(busIdLeftRpm, baseRpm * coefficient);
-			busCmd.AppendTemporaryFloat(busIdRightRpm, baseRpm * coefficient);
+			busCmd.AppendTemporaryFloat(busIdRpmLeft, baseRpm * coefficient);
+			busCmd.AppendTemporaryFloat(busIdRpmRight, baseRpm * coefficient);
 		}
 
 

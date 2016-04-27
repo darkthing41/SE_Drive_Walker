@@ -37,11 +37,11 @@ namespace SpaceEngineersScripting
 			phaseCount = 3;
 
 		const float
-		    baseRpm = 2.0f,
-			maxRpm = 3.0f;
+			rpmBase = 2.0f,
+			rpmMax = 3.0f;
 
 		const float
-			drivekP = (phaseCount / Pi) * baseRpm, //constant for Drive PD controllers
+			drivekP = (phaseCount / Pi) * rpmBase, //constant for Drive PD controllers
 			drivekD = 0.0f; //constant for Drive PD controllers
 
 		//Expected block names are of the form
@@ -52,12 +52,12 @@ namespace SpaceEngineersScripting
 			nameDescriptorDriveBase = "Drive";  //name shared by all drive rotors
 		static readonly string[]
 			nameDesciptorDriveSides = { "L", "R" }, // {Left, Right} sides
-			nameDesciptorDriveIds = { "F", "B" };   //Ids for each rotor in the column
+			nameDesciptorDriveIds = { "FF", "CF", "CB", "BB" };   //Ids for each rotor in the column
 			//Expect Drive Descriptor of the form
 			//  <DescriptorDrive> ::= <base>-<side>-<Column>-<id>
 			//  <Column> ::= <integer range 1..phaseCount>
 			//e.g. Front Right rotor in the innermost column
-			//Rotor Drive-R-1-F
+			//Rotor Drive-R-1-FF
 
 		const string
 			nameBusCommand = "Bus Drive.Command";
@@ -76,8 +76,8 @@ namespace SpaceEngineersScripting
 
 		//Bus ids
 		static readonly string
-			busIdLeftRpm = CommandBus.ExtendId("LeftRpm"),  // Left RPM := float
-			busIdRightRpm = CommandBus.ExtendId("RightRpm"),// Right RPM := float
+			busIdRpmLeft = CommandBus.ExtendId("RpmLeft"),  // Left RPM := float
+			busIdRpmRight = CommandBus.ExtendId("RpmRight"),// Right RPM := float
 			busIdCmdStop = CommandBus.ExtendId("Stop"),     // Emergency stop
 			busIdCmdHalt = CommandBus.ExtendId("Halt");     // Synchronised stop
 
@@ -412,7 +412,7 @@ namespace SpaceEngineersScripting
 
 			//command data persistent across restarts
 			public float
-				leftRpm, rightRpm;
+				rpmLeft, rpmRight;
 
 			public int
 				mode;
@@ -439,8 +439,8 @@ namespace SpaceEngineersScripting
 			{   //data setup
 				s = new StringBuilder();
 
-				leftRpm = 0.0f;
-				rightRpm = 0.0f;
+				rpmLeft = 0.0f;
+				rpmRight = 0.0f;
 
 				mode = Mode.Preparing;
 				command = Command.Stop;
@@ -463,8 +463,8 @@ namespace SpaceEngineersScripting
 					s.Append( delimiter );
 				}
 
-				s.Append( leftRpm.ToString("R") ); s.Append(delimiter);
-				s.Append( rightRpm.ToString("R") );
+				s.Append( rpmLeft.ToString("R") ); s.Append(delimiter);
+				s.Append( rpmRight.ToString("R") );
 
 				return s.ToString();
 			}
@@ -490,8 +490,8 @@ namespace SpaceEngineersScripting
 				}
 
 				return
-					float.TryParse (elements[pos++], out leftRpm)
-					&& float.TryParse (elements[pos++], out rightRpm);
+					float.TryParse (elements[pos++], out rpmLeft)
+					&& float.TryParse (elements[pos++], out rpmRight);
 			}
 		}
 
@@ -659,7 +659,7 @@ namespace SpaceEngineersScripting
 		private bool ParseRpm(string s, ref float target ){
 			float rpm;
 			if (float.TryParse (s, out rpm)) {
-				if ( (rpm >= -baseRpm) && (rpm <= baseRpm) ) {
+				if ( (rpm >= -rpmBase) && (rpm <= rpmBase) ) {
 					target = rpm;
 					return true;
 				} else {
@@ -688,12 +688,12 @@ namespace SpaceEngineersScripting
 							break;
 
 						case CommandBus.dataTypeFloat:
-							if (id == busIdLeftRpm) {
-								if (ParseRpm (data, ref status.leftRpm)) {
+							if (id == busIdRpmLeft) {
+								if (ParseRpm (data, ref status.rpmLeft)) {
 									Echo ("Left RPM set.");
 								}
-							} else if (id == busIdRightRpm) {
-								if (ParseRpm (data, ref status.rightRpm)) {
+							} else if (id == busIdRpmRight) {
+								if (ParseRpm (data, ref status.rpmRight)) {
 									Echo ("Right RPM set.");
 								}
 							} else {
@@ -779,7 +779,7 @@ namespace SpaceEngineersScripting
 					float
 						correction = status.driveControllers[indexDrive].Update(error, elapsedSeconds_reciprocal);
 					float
-						velocity = MyMath.Clamp (rpmSide + correction, 0.0f, maxRpm);
+						velocity = MyMath.Clamp (rpmSide + correction, 0.0f, rpmMax);
 
 					MotorStator.SetVelocity (drive.drive,
 						drive.inverted ? -velocity : velocity);
@@ -816,7 +816,7 @@ namespace SpaceEngineersScripting
 				phaseTargetRight;
 
 			//if possible, adjust targets to synchronise left and right sides
-			if (status.leftRpm == status.rightRpm) {
+			if (status.rpmLeft == status.rpmRight) {
 				Echo ("synchronising sides...");
 				float phaseTargetShared =
 						//AngleAverage_2Pi(phaseSides[driveLeft], phaseSides[driveRight]);
@@ -832,8 +832,8 @@ namespace SpaceEngineersScripting
 			//{!}TODO adjust to synchronise within sides, within columns
 
 			//set up Drives
-			SetupDrives(driveLeft, phaseTargetLeft, elapsedSeconds_reciprocal, status.leftRpm);
-			SetupDrives(driveRight, phaseTargetRight, elapsedSeconds_reciprocal, status.rightRpm);
+			SetupDrives(driveLeft, phaseTargetLeft, elapsedSeconds_reciprocal, status.rpmLeft);
+			SetupDrives(driveRight, phaseTargetRight, elapsedSeconds_reciprocal, status.rpmRight);
 
 			//Echo status
 //			Echo ("phaseLeft: " +MathHelper.ToDegrees(phaseSides[0]).ToString("F1") +'\u00B0');
