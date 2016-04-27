@@ -250,9 +250,6 @@ namespace SpaceEngineersScripting
 				get { return bus.GetPrivateText(); }
 				set { bus.WritePrivateText(value, false); }
 			}
-			private void Append(string value){
-				bus.WritePrivateText(value, true);
-			}
 
 
 			//Internal Implementation
@@ -260,13 +257,6 @@ namespace SpaceEngineersScripting
 				store;
 			private int
 				readPos;
-
-			/// <summary>
-			/// AppendTemporary archetype; append raw string as a temporary record.
-			/// </summary>
-			private void AppendTemporaryData(ref string id, char dataType, ref string data){
-				Append(id +dataType +data +recordTerminator);
-			}
 
 
 			//PUBLIC INTERFACE
@@ -285,20 +275,6 @@ namespace SpaceEngineersScripting
 			/// <returns>The valid identifier based on <paramref name="id"/>.</returns>
 			public static string ExtendId(string id){
 				return id.PadRight(lengthId, ' ');
-			}
-
-			public void AppendTemporaryInt(string id, int value){
-				string data = value.ToString ();
-				AppendTemporaryData(ref id, dataTypeInt, ref data);
-			}
-
-			public void AppendTemporaryFloat(string id, float value){
-				string data = value.ToString ("R");
-				AppendTemporaryData(ref id, dataTypeFloat, ref data);
-			}
-
-			public void AppendTemporaryString(string id, string value){
-				AppendTemporaryData(ref id, dataTypeString, ref value);
 			}
 
 			/// <summary>
@@ -341,8 +317,12 @@ namespace SpaceEngineersScripting
 			/// Saves the cached store.
 			/// </summary>
 			public void EndRead(){
-				Store = store.Remove(0, readPos);
-				readPos = 0;
+				//no work required if nothing was read
+				if (readPos > 0) {
+					Store = store.Remove(0, readPos);
+					readPos = 0;
+				}
+				store = null;
 			}
 
 		}
