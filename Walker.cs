@@ -77,7 +77,9 @@ namespace SpaceEngineersScripting
 		//Bus ids
 		static readonly string
 			busIdLeftRpm = CommandBus.ExtendId("LeftRpm"),  // Left RPM := float
-			busIdRightRpm = CommandBus.ExtendId("RightRpm");// Right RPM := float
+			busIdRightRpm = CommandBus.ExtendId("RightRpm"),// Right RPM := float
+			busIdCmdStop = CommandBus.ExtendId("Stop"),     // Emergency stop
+			busIdCmdHalt = CommandBus.ExtendId("Halt");     // Synchronised stop
 
 
 		//Utility definitions
@@ -388,16 +390,36 @@ namespace SpaceEngineersScripting
 			}
 		}
 
+		public struct Mode
+		{	//Mode enum
+			public const int
+				Preparing = 0,
+				Running = 1;
+		}
+		public struct Command
+		{	//Command enum
+			public const int
+				Stop = 0,
+			    Halt = 1,
+				Run = 2;
+		}
+
 		public struct Status
 		{
 			//program data not persistent across restarts
 			public bool
 				initialised;
 
-			//status data persistent across restarts
+			//command data persistent across restarts
 			public float
 				leftRpm, rightRpm;
 
+			public int
+				mode;
+			public int
+				command;
+
+			//status data persistent across restarts
 			public PD_Zero[]
 				driveControllers;
 
@@ -405,31 +427,43 @@ namespace SpaceEngineersScripting
 			//configuration constants
 			private const char delimiter = ';';
 
+
+			//Internal Implementation
+			//-reuse stringbuilder to reduce Storage impact
+			private StringBuilder s;
+
+
 			//Operations
 
 			public void Initialise()
 			{   //data setup
+				s = new StringBuilder();
+
+				leftRpm = 0.0f;
+				rightRpm = 0.0f;
+
+				mode = Mode.Preparing;
+				command = Command.Stop;
+
 				driveControllers = new PD_Zero[driveCount];
 				for (uint i=0; i<driveCount; i++) {
 					driveControllers[i] = new PD_Zero (drivekP, drivekD);
 				}
-				leftRpm = 0.0f;
-				rightRpm = 0.0f;
 			}
 
 			public string Store()
 			{
-				StringBuilder s = new StringBuilder();
-				for (uint i=0; i<phaseCount; i++) {
-					for (uint ii=0; ii<nameDesciptorDriveIds.Length; ii++) {
-						s.Append( driveControllers[IndexDrive(driveLeft,i,ii)].Store() );
-						s.Append( delimiter );
-						s.Append( driveControllers[IndexDrive(driveRight,i,ii)].Store() );
-						s.Append( delimiter );
-					}
+				s.Clear();
+
+				s.Append( mode.ToString() ); s.Append(delimiter);
+				s.Append( command.ToString() ); s.Append(delimiter);
+
+				for (uint i=0; i<driveCount; i++) {
+					s.Append( driveControllers[i].Store() );
+					s.Append( delimiter );
 				}
-				s.Append( leftRpm.ToString("R") );
-				s.Append( delimiter );
+
+				s.Append( leftRpm.ToString("R") ); s.Append(delimiter);
 				s.Append( rightRpm.ToString("R") );
 
 				return s.ToString();
@@ -437,21 +471,22 @@ namespace SpaceEngineersScripting
 
 			public bool TryRestore(string storage)
 			{
+				s = new StringBuilder();
+
 				string[] elements = storage.Split(delimiter);
-				if ( !(elements.Length == driveCount +2) )
+				if ( !(elements.Length == 2 +driveCount +2) )
 					return false;
 
 				uint pos = 0;    //element to examine
 
+				if ( !( int.TryParse(elements[pos++], out mode)
+				        && int.TryParse(elements[pos++], out command) ))
+					return false;
+
 				driveControllers = new PD_Zero[driveCount];
-				for (uint i=0; i<phaseCount; i++) {
-					for (uint ii=0; ii<driveIdCount; ii++) {
-						if ( !(
-							driveControllers[IndexDrive(driveLeft,i,ii)].TryRestore (elements[pos++])
-							&& driveControllers[IndexDrive(driveRight,i,ii)].TryRestore (elements[pos++])
-						))
-							return false;
-					}
+				for (uint i=0; i<driveCount; i++) {
+					if ( ! driveControllers[i].TryRestore(elements[pos++]) )
+						return false;
 				}
 
 				return
